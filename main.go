@@ -1,5 +1,6 @@
 // passgen generates secure random passwords locally, using the OS's
-// cryptographic random source. It never touches the network.
+// cryptographic random source. It never touches the network, except
+// when you ask it to with --check-update.
 package main
 
 import (
@@ -32,6 +33,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		noAmbiguous, noRequireEach        bool
 		doCopy, quiet, interactive        bool
 		listSymbols, showVersion          bool
+		checkForUpdate                    bool
 	)
 	intFlag := func(p *int, short, long string, def int, usage string) {
 		fs.IntVar(p, long, def, usage)
@@ -71,6 +73,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	boolFlag(&interactive, "i", "interactive", "interactive mode")
 	boolFlag(&listSymbols, "", "list-symbols", "show symbol sets")
 	boolFlag(&showVersion, "v", "version", "show version")
+	boolFlag(&checkForUpdate, "", "check-update", "check GitHub for a newer release")
 
 	fs.Usage = func() { printUsage(stderr) }
 
@@ -85,6 +88,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if checkForUpdate {
+		return checkUpdate(stdout, stderr, nil)
+	}
 	if showVersion {
 		fmt.Fprintln(stdout, "passgen", version)
 		return 0
@@ -193,6 +199,7 @@ Options:
   -i, --interactive       prompt for options, then regenerate/copy in a loop
       --list-symbols      show symbol sets and exit
   -v, --version           show version
+      --check-update      check GitHub for a newer release (the only network use)
   -h, --help              show this help
 
 Examples:

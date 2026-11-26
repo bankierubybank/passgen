@@ -1,6 +1,6 @@
 # passgen
 
-Generate secure random passwords locally. A single binary with no dependencies that never touches the network.
+Generate secure random passwords locally. A single binary with no dependencies that works fully offline. The only network call is an update check, and it runs only when you ask for it.
 
 - Randomness comes from the OS's cryptographic random source (Go `crypto/rand`), with unbiased selection
 - Complexity presets, plus per-character-set control
@@ -94,6 +94,7 @@ passgen -i              interactive mode
 | `-i, --interactive` | prompt for options, then regenerate/copy in a loop |
 | `--list-symbols` | show the symbol sets |
 | `-v, --version` | show version |
+| `--check-update` | check GitHub for a newer release (see below) |
 
 The strength line goes to stderr, so `passgen | pbcopy` and `pw=$(passgen)` capture only the password.
 
@@ -137,6 +138,22 @@ Exclude look-alike characters (Il1O0o etc)? [y/N]: y
 ```
 
 Linux clipboard support needs `wl-copy` (Wayland), `xclip` or `xsel`.
+
+### Checking for updates
+
+```
+$ passgen --check-update
+Checking github.com/bankierubybank/passgen for the latest release...
+New version available: v0.2.0 (you have v0.1.0)
+
+Release notes: https://github.com/bankierubybank/passgen/releases/tag/v0.2.0
+Download for this system: https://github.com/bankierubybank/passgen/releases/download/v0.2.0/passgen_v0.2.0_darwin_arm64.tar.gz
+...
+```
+
+- passgen connects to the network only when you run `--check-update`. Generating passwords, including interactive mode, never does, and a test enforces this.
+- The check is one `GET` to GitHub's public releases API. Nothing about you or your passwords is sent; GitHub sees only your IP address and the `passgen/<version>` user agent.
+- It never downloads or installs anything. It tells you whether a newer release exists and where to get it; you download it and check it against `checksums.txt` yourself.
 
 ## Development
 
