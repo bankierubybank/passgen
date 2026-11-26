@@ -16,7 +16,8 @@ jobs:
           fetch-depth: 0 # tags, for the version string
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Latest Go, so binaries ship with current crypto/TLS security fixes.
+          go-version: stable
       - name: Test
         run: make test
       - name: Build all platforms
