@@ -40,11 +40,21 @@ tar -xzf passgen_*_darwin_arm64.tar.gz
 sudo install -m 755 passgen_*/passgen /usr/local/bin/passgen
 ```
 
-Check the download against `checksums.txt`:
+#### Verify the download
+
+**Checksum.** Confirms the file wasn't corrupted or swapped:
 
 ```sh
 shasum -a 256 -c checksums.txt --ignore-missing
 ```
+
+**Build provenance (stronger).** Every release archive has a signed [GitHub attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations) proving it was built by this repo's release workflow, from a specific commit, on GitHub's servers. It wasn't built on someone's laptop or altered afterwards. With the [GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify passgen_v0.2.2_darwin_arm64.tar.gz -R bankierubybank/passgen
+```
+
+A passing check prints `✓ Verification succeeded!` along with the workflow and commit that built the file. Releases from v0.2.2 onward have attestations.
 
 **macOS "unidentified developer" warning:** the binaries are not notarized by Apple. To allow passgen to run:
 
@@ -162,6 +172,13 @@ make test         # go vet + go test -race
 make build        # binary for this machine
 make dist         # archives for every platform + checksums.txt in dist/
 ```
+
+### Supply-chain safeguards
+
+- **No dependencies:** Go standard library only.
+- **Pinned actions:** GitHub Actions are pinned to full commit SHAs, so a moved tag can't change what runs. Dependabot proposes updates weekly.
+- **Vulnerability scan:** [`govulncheck`](https://go.dev/doc/security/vuln/) runs on every push, weekly, and before each release. It fails if passgen calls code with a known vulnerability.
+- **Release builds:** made with the latest stable Go, in CI only, with a signed build provenance attestation (see *Verify the download*).
 
 ### Releasing
 

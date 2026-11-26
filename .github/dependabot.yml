@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Bumps the SHA-pinned actions in .github/workflows (and the version comments).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # passgen has no dependencies today; this covers any added later.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

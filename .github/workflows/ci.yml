@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, so newly published Go vulnerabilities are caught even without new commits.
+    - cron: "0 3 * * 1"
 
 permissions:
   contents: read
+
+# Actions are pinned to full commit SHAs (a tag can be moved; a SHA can't).
+# Dependabot keeps the pins current; the comment shows the version.
 
 jobs:
   test:
@@ -22,13 +28,30 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: test (${{ matrix.os }}, go ${{ matrix.go }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: ${{ matrix.go != 'go.mod' && matrix.go || '' }}
           go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
+          cache: false # no dependencies to cache
       - name: gofmt
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -race ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable # check the Go that releases are built with
+          cache: false
+      # Fails if code passgen actually calls has a known vulnerability
+      # (in the Go standard library or any dependency).
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...

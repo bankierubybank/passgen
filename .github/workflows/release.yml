@@ -5,24 +5,41 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # create the GitHub Release
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # sign the build attestation (Sigstore, via GitHub OIDC)
+      attestations: write # store the attestation on the repo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # tags, for the version string
-      - uses: actions/setup-go@v5
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           # Latest Go, so binaries ship with current crypto/TLS security fixes.
           go-version: stable
+          cache: false
       - name: Test
         run: make test
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
       - name: Build all platforms
-        run: make dist VERSION=${{ github.ref_name }}
+        env:
+          TAG: ${{ github.ref_name }}
+        run: make dist VERSION="$TAG"
+      # Signed proof that every archive in checksums.txt was built by this
+      # workflow from this commit. Verify with: gh attestation verify <file> -R <repo>
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes
