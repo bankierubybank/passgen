@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +27,9 @@ type release struct {
 
 func fetchLatest(client *http.Client) (release, error) {
 	var r release
-	req, err := http.NewRequest(http.MethodGet, latestReleaseURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestReleaseURL, nil)
 	if err != nil {
 		return r, err
 	}

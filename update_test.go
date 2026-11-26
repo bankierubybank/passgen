@@ -52,7 +52,7 @@ func fakeGitHub(t *testing.T, status int, body string) {
 			t.Errorf("User-Agent %q", ua)
 		}
 		w.WriteHeader(status)
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 	old := latestReleaseURL

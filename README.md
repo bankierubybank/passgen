@@ -178,6 +178,9 @@ make dist         # archives for every platform + checksums.txt in dist/
 - **No dependencies:** Go standard library only.
 - **Pinned actions:** GitHub Actions are pinned to full commit SHAs, so a moved tag can't change what runs. Dependabot proposes updates weekly.
 - **Vulnerability scan:** [`govulncheck`](https://go.dev/doc/security/vuln/) runs on every push, weekly, and before each release. It fails if passgen calls code with a known vulnerability.
+- **Static analysis:** [golangci-lint](https://golangci-lint.run) (staticcheck, errcheck, gosec and more) and [CodeQL](https://codeql.github.com) check the code; [zizmor](https://docs.zizmor.sh) checks the GitHub Actions workflows for injection, over-broad permissions and credential leaks.
+- **Randomness tests:** chi-square tests check that every character is equally likely overall and at every position, and that the test itself catches planted and modulo bias.
+- **Protected repo:** rulesets block force-push and deletion on `main`, require CI on pull requests, and let only the maintainer create or change `v*` release tags.
 - **Release builds:** made with the latest stable Go, in CI only, with a signed build provenance attestation (see *Verify the download*).
 
 ### Releasing

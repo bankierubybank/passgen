@@ -34,7 +34,8 @@ func copyToClipboard(text string) error {
 		if err != nil {
 			continue
 		}
-		cmd := exec.Command(path, c[1:]...)
+		// Command and args come from the fixed list above, never from user input.
+		cmd := exec.Command(path, c[1:]...) //nolint:gosec // G204: fixed, trusted command
 		cmd.Stdin = strings.NewReader(text)
 		return cmd.Run()
 	}

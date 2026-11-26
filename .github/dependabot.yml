@@ -5,6 +5,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Wait a week after a release before proposing it, so a hijacked
+    # release is likely caught and pulled before it reaches us.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -16,5 +20,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: deps

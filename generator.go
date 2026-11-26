@@ -154,7 +154,7 @@ func randIndex(n int) int {
 		// The OS random source failing is not recoverable; never fall back to weak randomness.
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
-	return int(v.Int64())
+	return int(v.Int64()) //nolint:gosec // G115: v < n, and n is an int, so it fits
 }
 
 // Generate makes one password. Call Validate first.

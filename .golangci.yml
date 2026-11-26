@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - gosec # security: weak randomness, command execution, file permissions, ...
+    - bodyclose # HTTP response bodies are closed
+    - noctx # HTTP requests carry a context (timeouts/cancellation)
+    - errorlint # errors compared with errors.Is/As, wrapped with %w
+    - misspell
+  settings:
+    gosec:
+      excludes:
+        - G104 # unchecked errors: errcheck already covers this
+  exclusions:
+    presets:
+      - std-error-handling # unchecked Close / fmt.Fprint* are fine
+
+formatters:
+  enable:
+    - gofmt
