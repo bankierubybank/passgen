@@ -1,0 +1,9 @@
+# build output
+/passgen
+/passgen.exe
+/dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
