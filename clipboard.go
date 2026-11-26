@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // clipboardCommands lists the commands to try, in order, for this OS.
@@ -34,8 +36,11 @@ func copyToClipboard(text string) error {
 		if err != nil {
 			continue
 		}
+		// A clipboard tool should finish instantly; don't hang if one stalls.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		// Command and args come from the fixed list above, never from user input.
-		cmd := exec.Command(path, c[1:]...) //nolint:gosec // G204: fixed, trusted command
+		cmd := exec.CommandContext(ctx, path, c[1:]...) //nolint:gosec // G204: fixed, trusted command
 		cmd.Stdin = strings.NewReader(text)
 		return cmd.Run()
 	}
