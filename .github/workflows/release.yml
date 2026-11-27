@@ -24,6 +24,15 @@ jobs:
           # Latest Go, so binaries ship with current crypto/TLS security fixes.
           go-version: stable
           cache: false
+      # Release only code that reached main (through a PR, with every required
+      # check passing), never a tag pushed on some other branch's commit.
+      - name: Tagged commit must be on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_SHA is not on main; refusing to release it"
+            exit 1
+          fi
       - name: Test
         run: make test
       - name: Vulnerability check
@@ -36,9 +45,18 @@ jobs:
       # built by this workflow from this commit.
       # Verify with: gh attestation verify <file> -R <repo>
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/checksums.txt
+      # Also ship the signed attestation itself, so it can be checked offline
+      # (gh attestation verify --bundle) and tools like OpenSSF Scorecard see
+      # the release is signed.
+      - name: Add attestation bundle to the release files
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        run: cp "$BUNDLE" "dist/passgen_${TAG}.intoto.jsonl"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

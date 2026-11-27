@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"io"
 	"math"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,13 @@ func TestCheckStrengthWeakPatterns(t *testing.T) {
 		{"asdfghjk", 15, "common password"},
 		{"zxcvbnm,", 20, "keyboard run"},
 		{"hi", 15, "shorter than 12"},
+		// Length must not rescue a pattern: these were "very strong" once.
+		{strings.Repeat("a", 100), 20, "repeated"},
+		{strings.Repeat("ab", 50), 20, "sequence"},
+		{strings.Repeat("abcdefghijklmnopqrstuvwxyz", 3), 25, "sequence"},
+		{"Password!Password!Password!Password!", 35, "repeats an earlier part"},
+		{"xK9#mQ2$xK9#mQ2$xK9#mQ2$", 65, "repeats an earlier part"},
+		{strings.Repeat("qwerty", 10), 25, "keyboard run"},
 	}
 	for _, c := range cases {
 		s := CheckStrength(c.pw)
@@ -58,7 +67,7 @@ func TestCheckStrengthEdgeCases(t *testing.T) {
 	}
 	// Non-ASCII counts, and doesn't break the rune bookkeeping.
 	s := CheckStrength("ñandú-パスワード-password")
-	if s.Length != 20 || !strings.Contains(strings.Join(s.Warnings, ","), "password") {
+	if s.Length != 20 || !strings.Contains(strings.Join(s.Warnings, ","), "common password") {
 		t.Errorf("unicode: %+v", s)
 	}
 	if math.IsNaN(s.Bits) || s.Bits <= 0 {
@@ -66,9 +75,27 @@ func TestCheckStrengthEdgeCases(t *testing.T) {
 	}
 }
 
+// The prompt hides the password, so the report must not show any of it.
+func TestCheckWarningsNeverShowThePassword(t *testing.T) {
+	for _, pw := range []string{"xK9qwerty#mQ2vL", "MyPassword2024!", "aaaaZq!", "Zq!abcdefZq!", "hunter2hunter2"} {
+		for _, w := range CheckStrength(pw).Warnings {
+			for i := 0; i+3 <= len(pw); i++ {
+				if chunk := pw[i : i+3]; strings.Contains(strings.ToLower(w), strings.ToLower(chunk)) && !strings.Contains(strings.ToLower(knownWarningText), strings.ToLower(chunk)) {
+					t.Errorf("%q: warning %q shows %q", pw, w, chunk)
+				}
+			}
+		}
+	}
+}
+
+// Text the warnings may legitimately contain (examples like "abcd").
+const knownWarningText = "empty password repeated characters sequence like abcd or 4321 keyboard run like qwerty " +
+	"looks like a year contains a common password or word repeats an earlier part of itself " +
+	"digits only, like a pin or date shorter than 12 characters"
+
 func TestCheckCLI(t *testing.T) {
 	code, out, _ := runCLI(t, "P@ssw0rd2024!\n", "check")
-	if code != 0 || !strings.Contains(out, "weak") || !strings.Contains(out, `"password"`) {
+	if code != 0 || !strings.Contains(out, "weak") || !strings.Contains(out, "common password") || strings.Contains(out, "ssw0rd") {
 		t.Errorf("exit %d, out %q", code, out)
 	}
 	code, out, _ = runCLI(t, "abc\n", "check", "-q")
@@ -88,6 +115,17 @@ func TestCheckCLI(t *testing.T) {
 	}
 	if code, _, _ := runCLI(t, "", "check"); code != 1 {
 		t.Errorf("no input: exit %d, want 1", code)
+	}
+	// Input is capped, so piping a huge file in can't eat memory.
+	code, _, errOut = runCLI(t, strings.Repeat("a", maxCheckRunes+1)+"\n", "check")
+	if code != 1 || !strings.Contains(errOut, "longer than") {
+		t.Errorf("overlong: exit %d, stderr %q", code, errOut)
+	}
+	if code, _, _ := runCLI(t, strings.Repeat("é", maxCheckRunes)+"\n", "check", "-q"); code != 0 {
+		t.Errorf("max length multibyte: exit %d, want 0", code)
+	}
+	if code, _, _ := runCLI(t, strings.Repeat("a", 10<<20), "check", "-q"); code != 1 {
+		t.Errorf("10 MB without newline: exit %d, want 1", code)
 	}
 	// Windows line endings are trimmed.
 	_, crlf, _ := runCLI(t, "password\r\n", "check", "-q")
@@ -143,6 +181,30 @@ func TestManVersionStamped(t *testing.T) {
 	_, out, _ := runCLI(t, "", "man")
 	if !strings.Contains(out, `"passgen v9.8.7"`) {
 		t.Errorf("version not in man header: %q", strings.SplitN(out, "\n", 2)[0])
+	}
+	if strings.Contains(out, "@VERSION@") || strings.Contains(out, "@DATE@") {
+		t.Errorf("unfilled placeholder in man page: %q", strings.SplitN(out, "\n", 2)[0])
+	}
+}
+
+// Every flag the parser knows must be in the list completion is built from.
+func TestFlagSpecsListEveryFlag(t *testing.T) {
+	fs, _, specs := newFlagSet(io.Discard)
+	names := map[string]bool{}
+	for _, s := range specs {
+		names[s.long] = true
+		if s.short != "" {
+			names[s.short] = true
+		}
+	}
+	fs.VisitAll(func(f *flag.Flag) {
+		if !names[f.Name] {
+			t.Errorf("flag %q missing from flagSpecs", f.Name)
+		}
+		delete(names, f.Name)
+	})
+	for n := range names {
+		t.Errorf("flagSpecs lists %q, which the parser doesn't know", n)
 	}
 }
 

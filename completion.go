@@ -8,7 +8,6 @@ package main
 //   fish:  passgen completion fish > ~/.config/fish/completions/passgen.fish
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -23,43 +22,11 @@ var flagValues = map[string][]string{
 	"symbol-mode": symbolModes,
 }
 
-// Flags that take a value (and so complete nothing, or a value list, next).
-func takesValue(f *flag.Flag) bool {
-	type boolFlag interface{ IsBoolFlag() bool }
-	b, ok := f.Value.(boolFlag)
-	return !ok || !b.IsBoolFlag()
-}
-
-// flagSpec is one option with its short and long names.
-type flagSpec struct {
-	long, short, usage string
-	value              bool
-}
-
+// flagSpecs lists every main-command flag, sorted by long name.
 func flagSpecs() []flagSpec {
-	fs, _ := newFlagSet(io.Discard)
-	byUsage := map[string]*flagSpec{}
-	var specs []*flagSpec
-	fs.VisitAll(func(f *flag.Flag) {
-		if len(f.Name) > 1 {
-			s := &flagSpec{long: f.Name, usage: f.Usage, value: takesValue(f)}
-			specs = append(specs, s)
-			byUsage[f.Usage] = s
-		}
-	})
-	fs.VisitAll(func(f *flag.Flag) {
-		if len(f.Name) == 1 {
-			if s, ok := byUsage[f.Usage]; ok {
-				s.short = f.Name
-			}
-		}
-	})
-	out := make([]flagSpec, len(specs))
-	for i, s := range specs {
-		out[i] = *s
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].long < out[j].long })
-	return out
+	_, _, specs := newFlagSet(io.Discard)
+	sort.Slice(specs, func(i, j int) bool { return specs[i].long < specs[j].long })
+	return specs
 }
 
 func runCompletion(args []string, stdout, stderr io.Writer) int {

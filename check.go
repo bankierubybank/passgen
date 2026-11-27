@@ -4,9 +4,10 @@ package main
 //
 // The estimate starts from brute force (length x log2(pool)), then charges
 // far less for the parts a cracking tool tries first: common passwords and
-// words (also with l33t swaps), repeated characters, sequences like "abcd"
-// or "4321", and keyboard runs like "qwerty". It is an upper bound: real
-// tools use much bigger word lists and rules, so treat it as a best case.
+// words (also with l33t swaps), years, repeated characters, sequences like
+// "abcd" or "4321", keyboard runs like "qwerty", and repeats of an earlier
+// part. It is an upper bound: real tools use much bigger word lists and
+// rules, so treat it as a best case.
 
 import (
 	"bufio"
@@ -17,8 +18,11 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -53,6 +57,9 @@ var commonWords = []string{
 	"000000", "123123", "654321", "112233", "121212", "696969", "1234",
 }
 
+// maxCheckRunes caps what check reads and scores, like the generator's length.
+const maxCheckRunes = maxLength
+
 // Keyboard rows, for spotting runs like "qwer" or "asdf".
 var keyboardRows = []string{"`1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./"}
 
@@ -65,7 +72,16 @@ type Strength struct {
 	Classes  []string // kinds of characters used
 	Pool     int      // brute-force pool those kinds imply
 	Bits     float64  // estimated entropy
-	Warnings []string
+	Warnings []string // never contain any part of the password
+}
+
+func (s *Strength) warn(msg string) {
+	for _, w := range s.Warnings {
+		if w == msg {
+			return
+		}
+	}
+	s.Warnings = append(s.Warnings, msg)
 }
 
 // charClass names the kind of a character and the size of its pool.
@@ -94,26 +110,33 @@ func keyboardPos(r rune) (row, col int) {
 	return -1, -1
 }
 
-// patternStep reports whether b continues a sequence or keyboard run from a.
+// patternStep reports whether b continues a run from a: the same character
+// again, the next or previous letter or digit, or the next key on the row.
 func patternStep(a, b rune) (kind string, ok bool) {
+	if a == b {
+		return "repeated characters", true
+	}
 	la, lb := unicode.ToLower(a), unicode.ToLower(b)
 	ca, _ := charClass(la)
 	cb, _ := charClass(lb)
 	if ca == cb && (ca == "lowercase" || ca == "digits") && (lb-la == 1 || la-lb == 1) {
-		return "sequence", true
+		return "sequence like abcd or 4321", true
 	}
 	ra, ia := keyboardPos(a)
 	rb, ib := keyboardPos(b)
 	if ra >= 0 && ra == rb && (ib-ia == 1 || ia-ib == 1) {
-		return "keyboard run", true
+		return "keyboard run like qwerty", true
 	}
 	return "", false
 }
 
-// commonCore finds the longest common password or word inside pw, ignoring
-// case and l33t swaps (p@ssw0rd), so "MyPassword2024!" is caught too. It
-// returns the word and the rune range it covers in pw.
-func commonCore(pw []rune) (word string, start, end int, ok bool) {
+// span is a stretch of the password, [start, end) in runes.
+type span struct{ start, end int }
+
+// commonWordSpans finds every common password or word in pw, ignoring case
+// and l33t swaps (p@ssw0rd), so "MyPassword2024!" is caught too. Matches
+// don't overlap; at each position the longest word wins.
+func commonWordSpans(pw []rune) []span {
 	lower := make([]rune, len(pw))
 	plain := make([]rune, len(pw)) // lowered, l33t undone; same length as pw
 	for i, r := range pw {
@@ -123,34 +146,61 @@ func commonCore(pw []rune) (word string, start, end int, ok bool) {
 			plain[i] = u
 		}
 	}
-	for _, text := range []string{string(lower), string(plain)} {
+	matchAt := func(text []rune, i int, w string) bool {
+		j := i
+		for _, c := range w {
+			if j >= len(text) || text[j] != c {
+				return false
+			}
+			j++
+		}
+		return true
+	}
+	var spans []span
+	for i := 0; i < len(pw); {
+		best := 0
 		for _, w := range commonWords {
-			n := len([]rune(w))
+			n := utf8.RuneCountInString(w)
 			// Short words only count as the whole password: "god" inside a
 			// random string is luck, not a pattern.
-			if n < 4 && n != len(pw) {
+			if n <= best || (n < 4 && n != len(pw)) {
 				continue
 			}
-			if n <= len([]rune(word)) {
-				continue
-			}
-			if i := strings.Index(text, w); i >= 0 {
-				word = w
-				start = utf8.RuneCountInString(text[:i])
-				end = start + n
-				ok = true
+			if matchAt(lower, i, w) || matchAt(plain, i, w) {
+				best = n
 			}
 		}
+		if best > 0 {
+			spans = append(spans, span{i, i + best})
+			i += best
+		} else {
+			i++
+		}
 	}
-	return word, start, end, ok
+	return spans
+}
+
+func sum(xs []float64) float64 {
+	t := 0.0
+	for _, x := range xs {
+		t += x
+	}
+	return t
 }
 
 // CheckStrength estimates the entropy of pw.
+//
+// Every character starts at the brute-force cost, log2(pool). Then whatever
+// a cracking tool would guess early gets re-priced at what it really adds:
+// a run (aaaa, abcd, qwer) costs ~log2(length)+1 bits for "keep going", a
+// year ~8 bits, a common word ~9 bits, and a repeat of an earlier part of
+// the password ~log2(where)+log2(length)+1 bits.
 func CheckStrength(pw string) Strength {
 	runes := []rune(pw)
-	s := Strength{Length: len(runes)}
-	if len(runes) == 0 {
-		s.Warnings = append(s.Warnings, "empty password")
+	n := len(runes)
+	s := Strength{Length: n}
+	if n == 0 {
+		s.warn("empty password")
 		return s
 	}
 
@@ -166,106 +216,179 @@ func CheckStrength(pw string) Strength {
 		}
 	}
 	perChar := math.Log2(float64(s.Pool))
-
-	// Cost of each character. Guessable continuations cost about 1 bit.
-	cost := make([]float64, len(runes))
-	cost[0] = perChar
-	runKind, runLen := "", 1
-	flush := func(end int) {
-		if runLen >= 3 {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("%s %q", runKind, string(runes[end-runLen:end])))
-		}
-	}
-	for i := 1; i < len(runes); i++ {
-		kind, ok := "", false
-		if runes[i] == runes[i-1] {
-			kind, ok = "repeated characters", true
-		} else {
-			kind, ok = patternStep(runes[i-1], runes[i])
-		}
-		if ok && (runLen == 1 || kind == runKind) {
-			cost[i] = 1
-			runKind = kind
-			runLen++
-			continue
-		}
-		flush(i)
-		runKind, runLen = "", 1
-		if ok { // a new run starting at i-1
-			cost[i] = 1
-			runKind, runLen = kind, 2
-			continue
-		}
+	cost := make([]float64, n)
+	for i := range cost {
 		cost[i] = perChar
 	}
-	flush(len(runes))
+
+	// Runs. The first character keeps its cost; continuing the run L-1 more
+	// times is one choice of length, not L-1 fresh characters.
+	for i := 0; i < n-1; {
+		kind, ok := patternStep(runes[i], runes[i+1])
+		if !ok {
+			i++
+			continue
+		}
+		j := i + 1
+		for j+1 < n {
+			if k, ok := patternStep(runes[j], runes[j+1]); !ok || k != kind {
+				break
+			}
+			j++
+		}
+		cont := j - i // characters after the first
+		each := (math.Log2(float64(cont)) + 1) / float64(cont)
+		for k := i + 1; k <= j; k++ {
+			cost[k] = math.Min(cost[k], each)
+		}
+		if cont >= 2 {
+			s.warn(kind)
+		}
+		i = j
+	}
 
 	// Years (1900-2099) are among the first things tried: ~200 choices.
-	for i := 0; i+4 <= len(runes); i++ {
+	for i := 0; i+4 <= n; i++ {
 		y := string(runes[i : i+4])
 		before := i == 0 || !unicode.IsDigit(runes[i-1])
-		after := i+4 == len(runes) || !unicode.IsDigit(runes[i+4])
+		after := i+4 == n || !unicode.IsDigit(runes[i+4])
 		if before && after && (strings.HasPrefix(y, "19") || strings.HasPrefix(y, "20")) && isDigits(y) {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("looks like a year (%q)", y))
+			s.warn("looks like a year")
 			for j := i; j < i+4; j++ {
 				cost[j] = math.Log2(200) / 4
 			}
 		}
 	}
 
-	bits := 0.0
-	if word, start, end, ok := commonCore(runes); ok {
-		s.Warnings = append(s.Warnings, fmt.Sprintf("based on a common password or word (%q)", word))
-		for i := start; i < end; i++ {
-			cost[i] = 0
+	// Common words: picking one from the list, plus a few bits for case and l33t.
+	wordBits := math.Log2(float64(len(commonWords))) + 2
+	for _, sp := range commonWordSpans(runes) {
+		s.warn("contains a common password or word")
+		each := wordBits / float64(sp.end-sp.start)
+		for i := sp.start; i < sp.end; i++ {
+			cost[i] = math.Min(cost[i], each)
 		}
-		// Picking a word from a big list, plus a few bits for case and l33t.
-		bits += math.Log2(float64(len(commonWords))) + 2
 	}
-	if isDigits(pw) && len(runes) <= 8 {
-		s.Warnings = append(s.Warnings, "digits only, like a PIN or date")
+
+	// Repeats of an earlier part (Password!Password!): the copy costs only
+	// where it starts and how long it is. Case is ignored, for one extra bit.
+	lower := make([]rune, n)
+	for i, r := range runes {
+		lower[i] = unicode.ToLower(r)
 	}
-	for _, c := range cost {
-		bits += c
+	for i := 1; i < n; {
+		bestLen, bestFrom := 0, 0
+		for j := 0; j < i; j++ {
+			m := 0
+			for i+m < n && lower[j+m] == lower[i+m] {
+				m++
+			}
+			if m > bestLen {
+				bestLen, bestFrom = m, j
+			}
+		}
+		if bestLen >= 3 {
+			ref := math.Log2(float64(i-bestFrom)) + math.Log2(float64(bestLen)) + 1
+			if sum(cost[i:i+bestLen]) > ref {
+				s.warn("repeats an earlier part of itself")
+				for k := i; k < i+bestLen; k++ {
+					cost[k] = ref / float64(bestLen)
+				}
+			}
+			i += bestLen
+			continue
+		}
+		i++
 	}
-	s.Bits = math.Min(bits, float64(len(runes))*perChar)
-	if len(runes) < 12 {
-		s.Warnings = append(s.Warnings, "shorter than 12 characters")
+
+	if isDigits(pw) && n <= 8 {
+		s.warn("digits only, like a PIN or date")
 	}
+	if n < 12 {
+		s.warn("shorter than 12 characters")
+	}
+	s.Bits = math.Min(sum(cost), float64(n)*perChar)
 	return s
 }
 
-// readSecret reads one line from stdin. On a terminal it hides what is typed
-// (where the OS lets us), so the password does not end up on screen.
-func readSecret(stdin io.Reader, stderr io.Writer) (string, error) {
-	f, isFile := stdin.(*os.File)
-	tty := false
-	if isFile {
-		if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
-			tty = true
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
 		}
 	}
-	if tty {
+	return s != ""
+}
+
+// readSecret reads one line from stdin, at most maxCheckRunes characters.
+// On a terminal it hides what is typed (where the OS lets us), so the
+// password does not end up on screen.
+func readSecret(stdin io.Reader, stderr io.Writer) (string, error) {
+	if f, ok := stdin.(*os.File); ok && isTerminal(f) {
 		if runtime.GOOS == "windows" {
 			fmt.Fprint(stderr, "Password to check (input is visible): ")
 		} else {
 			fmt.Fprint(stderr, "Password to check (not shown): ")
-			if setEcho(f, false) == nil {
-				defer func() {
-					_ = setEcho(f, true)
-					fmt.Fprintln(stderr)
-				}()
-			}
+			defer hideInput(f, stderr)()
 		}
 	}
-	line, err := bufio.NewReader(stdin).ReadString('\n')
+	// A rune is at most 4 bytes; read one byte more to spot overlong input.
+	limit := int64(maxCheckRunes*utf8.UTFMax + 1)
+	line, err := bufio.NewReader(io.LimitReader(stdin, limit)).ReadString('\n')
 	if err != nil && line == "" {
 		if errors.Is(err, io.EOF) {
 			return "", errors.New("no password given on stdin")
 		}
 		return "", err
 	}
-	return strings.TrimRight(line, "\r\n"), nil
+	line = strings.TrimRight(line, "\r\n")
+	if int64(len(line)) >= limit-1 || utf8.RuneCountInString(line) > maxCheckRunes {
+		return "", fmt.Errorf("password longer than %d characters", maxCheckRunes)
+	}
+	return line, nil
+}
+
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+// Swappable in tests.
+var (
+	echoFn = setEcho
+	exitFn = os.Exit
+)
+
+// hideInput turns terminal echo off and returns a function that turns it
+// back on. Until then, Ctrl-C or SIGTERM also restores echo before exiting,
+// so the terminal is never left silent.
+func hideInput(tty *os.File, stderr io.Writer) (restore func()) {
+	if echoFn(tty, false) != nil {
+		return func() {}
+	}
+	var once sync.Once
+	restoreEcho := func() {
+		once.Do(func() {
+			_ = echoFn(tty, true)
+			fmt.Fprintln(stderr)
+		})
+	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-sig:
+			restoreEcho()
+			exitFn(130) // the usual exit status after Ctrl-C
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(sig)
+		close(done)
+		restoreEcho()
+	}
 }
 
 // setEcho turns terminal echo on or off with stty (macOS, Linux, BSD).
@@ -277,15 +400,6 @@ func setEcho(tty *os.File, on bool) error {
 	cmd := exec.Command("stty", arg) //nolint:gosec,noctx // G204: fixed command; stty returns at once
 	cmd.Stdin = tty
 	return cmd.Run()
-}
-
-func isDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return s != ""
 }
 
 func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

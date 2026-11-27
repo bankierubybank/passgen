@@ -103,11 +103,15 @@ func (o Options) Pools() []string {
 		exclude += ambiguousChars
 	}
 
+	// Each character goes in one pool only, once. A custom --symbol-set
+	// like "!!!#" or "a-" would otherwise make some characters likelier.
+	used := map[rune]bool{}
 	var pools []string
 	for _, p := range raw {
 		var b strings.Builder
 		for _, c := range p {
-			if !strings.ContainsRune(exclude, c) {
+			if !strings.ContainsRune(exclude, c) && !used[c] {
+				used[c] = true
 				b.WriteRune(c)
 			}
 		}
@@ -189,9 +193,41 @@ func Generate(o Options) string {
 // PoolSize is the number of distinct characters a password is drawn from.
 func (o Options) PoolSize() int { return len(alphabet(o.Pools())) }
 
-// EntropyBits estimates the strength of a password made with these options.
+// EntropyBits estimates the strength of a password made with these options:
+// log2 of how many different passwords they allow.
+//
+// Without RequireEach that is pool^length. With it, passwords missing a set
+// are impossible, so they are subtracted (inclusion-exclusion over the sets):
+//
+//	count = sum over subsets S of sets: (-1)^|S| * (pool - |S chars|)^length
+//
+// computed as length*log2(pool) + log2(sum of (-1)^|S| * (1 - |S|/pool)^length)
+// so huge lengths don't overflow.
 func (o Options) EntropyBits() float64 {
-	return float64(o.Length) * math.Log2(float64(o.PoolSize()))
+	pools := o.Pools()
+	size := float64(len(alphabet(pools)))
+	if size == 0 || o.Length < 1 {
+		return 0
+	}
+	bits := float64(o.Length) * math.Log2(size)
+	if !o.RequireEach || len(pools) < 2 {
+		return bits
+	}
+	total := 0.0
+	for mask := 0; mask < 1<<len(pools); mask++ {
+		left, sign := size, 1.0
+		for i, p := range pools {
+			if mask&(1<<i) != 0 {
+				left -= float64(len([]rune(p)))
+				sign = -sign
+			}
+		}
+		total += sign * math.Pow(left/size, float64(o.Length))
+	}
+	if total <= 0 { // length too short for every set: Validate rejects this
+		return 0
+	}
+	return bits + math.Log2(total)
 }
 
 // StrengthLabel turns entropy bits into a word.

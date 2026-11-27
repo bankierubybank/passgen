@@ -61,6 +61,13 @@ gh attestation verify passgen_v0.2.2_darwin_arm64.tar.gz -R bankierubybank/passg
 
 A passing check prints `✓ Verification succeeded!` along with the workflow and commit that built the file. Releases from v0.2.2 onward have attestations.
 
+From v0.3.1 on, the signed attestation is also a release file, `passgen_<version>.intoto.jsonl`, so you can verify without asking GitHub for it:
+
+```sh
+gh attestation verify passgen_v0.3.1_darwin_arm64.tar.gz -R bankierubybank/passgen \
+  --bundle passgen_v0.3.1.intoto.jsonl
+```
+
 **SBOM.** From v0.3.0 on, each release also has `passgen_<version>_sbom.cdx.json`, a [CycloneDX](https://cyclonedx.org) list of exactly what is compiled in: passgen itself and the Go standard library version. It is covered by `checksums.txt` and the attestation like the archives.
 
 **macOS "unidentified developer" warning:** the binaries are not notarized by Apple. To allow passgen to run:
@@ -170,13 +177,15 @@ Length:     13
 Characters: lowercase, uppercase, digits, symbols (pool 95)
 Estimate:   ~23 bits: weak
 Warnings:
-  - looks like a year ("2024")
-  - based on a common password or word ("password")
+  - looks like a year
+  - contains a common password or word
 ```
 
 - Type the password at the prompt (hidden on macOS, Linux and BSD; visible on Windows) or pipe it in: `pbpaste | passgen check`.
 - It never takes the password as an argument, since that would save it in your shell history.
-- The estimate starts from brute force, then charges much less for what cracking tools try first: common passwords and words (also with l33t swaps like `p@ssw0rd`), years, repeats, sequences like `abcd` or `4321`, and keyboard runs like `qwerty`.
+- The estimate starts from brute force, then charges much less for what cracking tools try first: common passwords and words (also with l33t swaps like `p@ssw0rd`), years, repeated characters, sequences like `abcd` or `4321`, keyboard runs like `qwerty`, and repeats of an earlier part (`Password!Password!`). Making a pattern longer barely helps: `aaaa…` 100 times is still weak.
+- The report never shows any part of the password, and Ctrl-C at the hidden prompt puts your terminal back to normal.
+- Input is limited to 4096 characters.
 - It is a **best case**. Real cracking tools use far bigger word lists, so a password made of ordinary words (`correct horse battery staple`) scores higher here than it deserves. A random password from passgen has none of these weaknesses.
 - `--min-bits N` exits with status 3 when the estimate is below N, for scripts. `-q` prints the bits only.
 
@@ -242,7 +251,8 @@ go test -run '^$' -fuzz '^FuzzCheckStrength$' -fuzztime 1m .
 - **OpenSSF Scorecard:** grades the repo's supply-chain practices weekly (badge at the top; details under *Security → Code scanning*).
 - **Protected repo:** rulesets block force-push and deletion on `main`, require CI and signed commits, and let only the maintainer create or change `v*` release tags.
 - **Signed commits and tags:** every commit and release tag is GPG-signed; GitHub shows them as *Verified*.
-- **Release builds:** made with the latest stable Go, in CI only, with a signed build provenance attestation and an SBOM (see *Verify the download*).
+- **Release builds:** made with the latest stable Go, in CI only, only from commits already on `main`, with a signed build provenance attestation and an SBOM (see *Verify the download*).
+- **Update check:** release tags must look like `v1.2.3` (letters, digits, dots and dashes only) before anything is printed, and links are built by passgen, not taken from GitHub's response.
 
 ### Releasing
 
@@ -252,6 +262,10 @@ Push a signed version tag. GitHub Actions runs the tests, builds every platform,
 git tag -s v1.0.0 -m "passgen v1.0.0"
 git push origin v1.0.0
 ```
+
+## Security
+
+Found a security problem? Please report it privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 
