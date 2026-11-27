@@ -44,6 +44,12 @@ var presets = map[string]preset{
 
 var complexityLevels = []string{"low", "medium", "high"}
 
+// Upper limits, so a typo like -l 10000000 fails fast instead of eating memory.
+const (
+	maxLength = 4096
+	maxCount  = 10000
+)
+
 // Options fully describe how passwords are generated.
 type Options struct {
 	Length      int
@@ -119,8 +125,8 @@ func (o Options) Validate() error {
 			return fmt.Errorf("unknown symbol mode %q (want safe, standard or complex)", o.SymbolMode)
 		}
 	}
-	if o.Length < 1 {
-		return errors.New("length must be at least 1")
+	if o.Length < 1 || o.Length > maxLength {
+		return fmt.Errorf("length must be 1-%d", maxLength)
 	}
 	pools := o.Pools()
 	if len(pools) == 0 {
