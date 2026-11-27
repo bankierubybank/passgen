@@ -23,8 +23,10 @@ func (p *prompter) line(prompt string) (string, error) {
 	return strings.TrimSpace(s), nil
 }
 
-// askInt prompts until a number in [min, max] is given. Empty keeps def.
-func (p *prompter) askInt(label string, def, min, max int) (int, error) {
+// askInt prompts until a number in [lo, hi] is given. Empty keeps def,
+// pulled into range first (a command-line -l or -n may be outside it).
+func (p *prompter) askInt(label string, def, lo, hi int) (int, error) {
+	def = max(lo, min(def, hi))
 	for {
 		s, err := p.line(fmt.Sprintf("%s [%d]: ", label, def))
 		if err != nil {
@@ -38,8 +40,8 @@ func (p *prompter) askInt(label string, def, min, max int) (int, error) {
 			fmt.Fprintln(p.out, "  enter a number")
 			continue
 		}
-		if v < min || v > max {
-			fmt.Fprintf(p.out, "  must be %d-%d\n", min, max)
+		if v < lo || v > hi {
+			fmt.Fprintf(p.out, "  must be %d-%d\n", lo, hi)
 			continue
 		}
 		return v, nil

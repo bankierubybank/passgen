@@ -1,4 +1,4 @@
-.TH PASSGEN 1 "2026-11-27" "passgen dev" "User Commands"
+.TH PASSGEN 1 "@DATE@" "passgen @VERSION@" "User Commands"
 .SH NAME
 passgen \- generate secure random passwords locally
 .SH SYNOPSIS
@@ -137,8 +137,12 @@ characters, sequences such as
 .B abcd
 or
 .BR 4321 ,
-and keyboard runs such as
-.BR qwerty .
+keyboard runs such as
+.BR qwerty ,
+and repeats of an earlier part.
+Making a pattern longer barely raises the estimate.
+The report never shows any part of the password.
+Input is limited to 4096 characters.
 It is a best case: real tools use much bigger word lists.
 .TP
 .BI \-\-min\-bits " N"

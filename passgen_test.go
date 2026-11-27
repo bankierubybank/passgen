@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"math"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -224,5 +226,79 @@ func TestInteractiveRetriesBadInputAndEOF(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output", want)
 		}
+	}
+}
+
+// Duplicates in a custom symbol set, or symbols that are also letters or
+// digits, must not make any character likelier.
+func TestPoolsHaveNoDuplicates(t *testing.T) {
+	o := defaultOpts(t, "high")
+	o.SymbolSet = "!!!!#a1"
+	pools := o.Pools()
+	if got := pools[len(pools)-1]; got != "!#" {
+		t.Errorf("symbol pool %q, want %q", got, "!#")
+	}
+	seen := map[rune]bool{}
+	for _, p := range pools {
+		for _, c := range p {
+			if seen[c] {
+				t.Errorf("%q appears twice across pools %q", c, pools)
+			}
+			seen[c] = true
+		}
+	}
+	// A symbol set made only of letters adds no new set to require.
+	o.SymbolSet = "abc"
+	if n := len(o.Pools()); n != 3 {
+		t.Errorf("%d pools, want 3", n)
+	}
+}
+
+// With one char forced from each set, the count of possible passwords is
+// exactly computable for short lengths.
+func TestEntropyBitsRequireEach(t *testing.T) {
+	o := defaultOpts(t, "high") // 26 + 26 + 10 + 11 safe symbols
+	o.Length = 4
+	// One from each set, in any of 4! orders.
+	want := math.Log2(26 * 26 * 10 * 11 * 24)
+	if got := o.EntropyBits(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("length 4: %.4f bits, want %.4f", got, want)
+	}
+	// Long passwords: the rule barely matters.
+	o.Length = 64
+	if got, plain := o.EntropyBits(), 64*math.Log2(73); plain-got > 0.01 || got > plain {
+		t.Errorf("length 64: %.3f bits, want just under %.3f", got, plain)
+	}
+	// Huge lengths must not overflow.
+	o.Length = maxLength
+	if got := o.EntropyBits(); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Errorf("max length: %v", got)
+	}
+	o.RequireEach = false
+	o.Length = 4
+	if got, want := o.EntropyBits(), 4*math.Log2(73); math.Abs(got-want) > 1e-9 {
+		t.Errorf("no require-each: %.4f, want %.4f", got, want)
+	}
+}
+
+// Interactive mode has its own limits; command-line defaults outside them
+// are pulled in instead of being accepted as-is.
+func TestInteractiveClampsCommandLineDefaults(t *testing.T) {
+	code, out, _ := runCLI(t, "\n\n\n\nq\n", "-i", "-l", "2000", "-n", "150", "--no-symbols", "-c", "low")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(out, "Length [1024]") || !strings.Contains(out, "How many [100]") {
+		t.Errorf("defaults not clamped:\n%s", out)
+	}
+	if n := len(regexp.MustCompile(`(?m)^ +\d+\) `).FindAllString(out, -1)); n != 100 {
+		t.Errorf("printed %d passwords, want 100", n)
+	}
+}
+
+func TestInteractiveWarnsAboutIgnoredFlags(t *testing.T) {
+	_, _, errOut := runCLI(t, "q\n", "-i", "--copy")
+	if !strings.Contains(errOut, "don't apply to -i") {
+		t.Errorf("stderr %q", errOut)
 	}
 }

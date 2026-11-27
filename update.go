@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -20,9 +20,11 @@ const repo = "bankierubybank/passgen"
 // latestReleaseURL is a variable so tests can point it at a fake server.
 var latestReleaseURL = "https://api.github.com/repos/" + repo + "/releases/latest"
 
+// Only the tag is used. Links are built from it here rather than taken from
+// the response, so nothing GitHub (or anyone in between) sends is printed
+// unchecked.
 type release struct {
 	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
 }
 
 func fetchLatest(client *http.Client) (release, error) {
@@ -59,24 +61,24 @@ func fetchLatest(client *http.Client) (release, error) {
 	return r, nil
 }
 
-// parseVersion reads "v1.2.3" plus any suffix (e.g. "-rc1" or the
-// "-3-gabc123-dirty" that git describe adds). Returns the numbers, whether
-// there was a suffix, and whether it parsed at all.
+// versionPattern is "v1.2.3" plus an optional suffix such as "-rc1" or the
+// "-3-gabc123-dirty" that git describe adds. The suffix allows only letters,
+// digits, dots and dashes: a release tag is printed inside a shell command
+// for the user to copy, so quotes, $, ;, spaces or control characters must
+// never get through.
+var versionPattern = regexp.MustCompile(`^v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:-([0-9A-Za-z][0-9A-Za-z.-]{0,63}))?$`)
+
+// parseVersion returns the numbers, whether there was a suffix, and whether
+// v is a well-formed version at all.
 func parseVersion(v string) (nums [3]int, suffix bool, ok bool) {
-	v = strings.TrimPrefix(v, "v")
-	core, rest, hasRest := strings.Cut(v, "-")
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
+	m := versionPattern.FindStringSubmatch(v)
+	if m == nil {
 		return nums, false, false
 	}
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
-			return nums, false, false
-		}
-		nums[i] = n
+	for i := range nums {
+		nums[i], _ = strconv.Atoi(m[i+1]) // at most 9 digits: always fits
 	}
-	return nums, hasRest && rest != "", true
+	return nums, m[4] != "", true
 }
 
 // newer reports whether version a is higher than b (numbers only).
@@ -101,7 +103,18 @@ func assetName(tag string) string {
 // checkUpdate prints whether a newer release exists. It never downloads or installs anything.
 func checkUpdate(stdout, stderr io.Writer, client *http.Client) int {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{
+			// The request's own 15s deadline (fetchLatest) bounds the time.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" {
+					return errors.New("refusing a redirect away from https")
+				}
+				if len(via) >= 5 {
+					return errors.New("too many redirects")
+				}
+				return nil
+			},
+		}
 	}
 	fmt.Fprintln(stderr, "Checking github.com/"+repo+" for the latest release...")
 	latest, err := fetchLatest(client)
@@ -117,7 +130,7 @@ func checkUpdate(stdout, stderr io.Writer, client *http.Client) int {
 	case newer(latestNums, cur):
 		asset := assetName(latest.TagName)
 		fmt.Fprintf(stdout, "New version available: %s (you have %s)\n\n", latest.TagName, version)
-		fmt.Fprintf(stdout, "Release notes: %s\n", latest.HTMLURL)
+		fmt.Fprintf(stdout, "Release notes: https://github.com/%s/releases/tag/%s\n", repo, latest.TagName)
 		fmt.Fprintf(stdout, "Download for this system: https://github.com/%s/releases/download/%s/%s\n", repo, latest.TagName, asset)
 		fmt.Fprintf(stdout, "\nOr with the GitHub CLI:\n  gh release download %s -R %s -p '%s' -p checksums.txt\n", latest.TagName, repo, asset)
 		fmt.Fprintln(stdout, "\nVerify the download against checksums.txt before installing.")

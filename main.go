@@ -39,28 +39,38 @@ var subcommands = [][2]string{
 	{"man", "print the man page"},
 }
 
-// newFlagSet defines the main command's flags. Completion scripts are built
-// from the same set, so they can't drift from what passgen accepts.
-func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags) {
+// flagSpec is one option with its long and short names.
+type flagSpec struct {
+	long, short, usage string
+	value              bool // takes an argument
+}
+
+// newFlagSet defines the main command's flags, and lists them for the
+// completion scripts so those can't drift from what passgen accepts.
+func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags, []flagSpec) {
 	fs := flag.NewFlagSet("passgen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	f := &cliFlags{}
+	var specs []flagSpec
 
 	intFlag := func(p *int, short, long string, def int, usage string) {
 		fs.IntVar(p, long, def, usage)
 		fs.IntVar(p, short, def, usage)
+		specs = append(specs, flagSpec{long, short, usage, true})
 	}
 	strFlag := func(p *string, short, long, def, usage string) {
 		fs.StringVar(p, long, def, usage)
 		if short != "" {
 			fs.StringVar(p, short, def, usage)
 		}
+		specs = append(specs, flagSpec{long, short, usage, true})
 	}
 	boolFlag := func(p *bool, short, long, usage string) {
 		fs.BoolVar(p, long, false, usage)
 		if short != "" {
 			fs.BoolVar(p, short, false, usage)
 		}
+		specs = append(specs, flagSpec{long, short, usage, false})
 	}
 
 	intFlag(&f.length, "l", "length", 16, "password length")
@@ -85,7 +95,7 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags) {
 	boolFlag(&f.listSymbols, "", "list-symbols", "show symbol sets")
 	boolFlag(&f.showVersion, "v", "version", "show version")
 	boolFlag(&f.checkForUpdate, "", "check-update", "check GitHub for a newer release")
-	return fs, f
+	return fs, f, specs
 }
 
 // run is main without the process exit, so tests can drive it.
@@ -101,7 +111,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 
-	fs, f := newFlagSet(stderr)
+	fs, f, _ := newFlagSet(stderr)
 	fs.Usage = func() { printUsage(stderr) }
 
 	if err := fs.Parse(args); err != nil {
@@ -163,6 +173,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	})
 
 	if f.interactive {
+		if f.doCopy || f.quiet {
+			fmt.Fprintln(stderr, "passgen: --copy and --quiet don't apply to -i (press c to copy)")
+		}
 		return runInteractive(opts, f.complexity, f.count, stdin, stdout, stderr)
 	}
 
