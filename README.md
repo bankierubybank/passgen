@@ -1,5 +1,8 @@
 # passgen
 
+[![CI](https://github.com/bankierubybank/passgen/actions/workflows/ci.yml/badge.svg)](https://github.com/bankierubybank/passgen/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/bankierubybank/passgen/badge)](https://scorecard.dev/viewer/?uri=github.com/bankierubybank/passgen)
+
 Generate secure random passwords locally. A single binary with no dependencies that works fully offline. The only network call is an update check, and it runs only when you ask for it.
 
 - Randomness comes from the OS's cryptographic random source (Go `crypto/rand`), with unbiased selection
@@ -9,6 +12,8 @@ Generate secure random passwords locally. A single binary with no dependencies t
 - Shows estimated entropy and a strength label
 - Clipboard copy on macOS, Windows and Linux
 - Interactive mode
+- `passgen check`: rates a password you already have, offline
+- Shell completion (bash, zsh, fish) and a man page
 
 ```
 $ passgen
@@ -56,6 +61,8 @@ gh attestation verify passgen_v0.2.2_darwin_arm64.tar.gz -R bankierubybank/passg
 
 A passing check prints `✓ Verification succeeded!` along with the workflow and commit that built the file. Releases from v0.2.2 onward have attestations.
 
+**SBOM.** From v0.3.0 on, each release also has `passgen_<version>_sbom.cdx.json`, a [CycloneDX](https://cyclonedx.org) list of exactly what is compiled in: passgen itself and the Go standard library version. It is covered by `checksums.txt` and the attestation like the archives.
+
 **macOS "unidentified developer" warning:** the binaries are not notarized by Apple. To allow passgen to run:
 
 ```sh
@@ -82,13 +89,16 @@ make build        # -> ./passgen
 
 ```
 passgen [options]
-passgen -i              interactive mode
+passgen -i                  interactive mode
+passgen check               rate a password (reads stdin)
+passgen completion SHELL    shell completion: bash, zsh, fish
+passgen man                 man page
 ```
 
 | Option | Description |
 |---|---|
-| `-l, --length N` | password length (default 16) |
-| `-n, --count N` | number of passwords (default 1) |
+| `-l, --length N` | password length, 1-4096 (default 16) |
+| `-n, --count N` | number of passwords, 1-10000 (default 1) |
 | `-c, --complexity LEVEL` | `low` = a-z 0-9, `medium` = + A-Z, `high` = + symbols (default `high`) |
 | `-s, --symbol-mode MODE` | `safe`, `standard` or `complex` (default `safe`), see below |
 | `--symbol-set CHARS` | your own symbols (overrides `--symbol-mode`) |
@@ -149,6 +159,50 @@ Exclude look-alike characters (Il1O0o etc)? [y/N]: y
 
 Linux clipboard support needs `wl-copy` (Wayland), `xclip` or `xsel`.
 
+### Checking a password
+
+`passgen check` estimates how strong a password you already have is. It runs offline, like everything else, and sends nothing anywhere.
+
+```
+$ passgen check
+Password to check (not shown):
+Length:     13
+Characters: lowercase, uppercase, digits, symbols (pool 95)
+Estimate:   ~23 bits: weak
+Warnings:
+  - looks like a year ("2024")
+  - based on a common password or word ("password")
+```
+
+- Type the password at the prompt (hidden on macOS, Linux and BSD; visible on Windows) or pipe it in: `pbpaste | passgen check`.
+- It never takes the password as an argument, since that would save it in your shell history.
+- The estimate starts from brute force, then charges much less for what cracking tools try first: common passwords and words (also with l33t swaps like `p@ssw0rd`), years, repeats, sequences like `abcd` or `4321`, and keyboard runs like `qwerty`.
+- It is a **best case**. Real cracking tools use far bigger word lists, so a password made of ordinary words (`correct horse battery staple`) scores higher here than it deserves. A random password from passgen has none of these weaknesses.
+- `--min-bits N` exits with status 3 when the estimate is below N, for scripts. `-q` prints the bits only.
+
+### Shell completion
+
+```sh
+# bash: add to ~/.bashrc
+source <(passgen completion bash)
+
+# zsh: put it on your fpath (run once)
+passgen completion zsh > "${fpath[1]}/_passgen"
+
+# fish
+passgen completion fish > ~/.config/fish/completions/passgen.fish
+```
+
+### Man page
+
+The man page is built into the binary, and `passgen.1` is also in each release archive:
+
+```sh
+passgen man | man -l -          # Linux: read it now
+sudo mkdir -p /usr/local/share/man/man1
+passgen man | sudo tee /usr/local/share/man/man1/passgen.1 >/dev/null   # then: man passgen
+```
+
 ### Checking for updates
 
 ```
@@ -171,6 +225,10 @@ Download for this system: https://github.com/bankierubybank/passgen/releases/dow
 make test         # go vet + go test -race
 make build        # binary for this machine
 make dist         # archives for every platform + checksums.txt in dist/
+make release-dist # the same plus the SBOM, as CI does for a release
+
+# fuzz one target for a while (see fuzz_test.go for the list)
+go test -run '^$' -fuzz '^FuzzCheckStrength$' -fuzztime 1m .
 ```
 
 ### Supply-chain safeguards
@@ -180,15 +238,18 @@ make dist         # archives for every platform + checksums.txt in dist/
 - **Vulnerability scan:** [`govulncheck`](https://go.dev/doc/security/vuln/) runs on every push, weekly, and before each release. It fails if passgen calls code with a known vulnerability.
 - **Static analysis:** [golangci-lint](https://golangci-lint.run) (staticcheck, errcheck, gosec and more) and [CodeQL](https://codeql.github.com) check the code; [zizmor](https://docs.zizmor.sh) checks the GitHub Actions workflows for injection, over-broad permissions and credential leaks.
 - **Randomness tests:** chi-square tests check that every character is equally likely overall and at every position, and that the test itself catches planted and modulo bias.
-- **Protected repo:** rulesets block force-push and deletion on `main`, require CI on pull requests, and let only the maintainer create or change `v*` release tags.
-- **Release builds:** made with the latest stable Go, in CI only, with a signed build provenance attestation (see *Verify the download*).
+- **Fuzzing:** Go fuzz tests feed random input to the generator, the command-line parser, the strength checker and the update check's version parser. CI fuzzes each one on every push and pull request.
+- **OpenSSF Scorecard:** grades the repo's supply-chain practices weekly (badge at the top; details under *Security → Code scanning*).
+- **Protected repo:** rulesets block force-push and deletion on `main`, require CI and signed commits, and let only the maintainer create or change `v*` release tags.
+- **Signed commits and tags:** every commit and release tag is GPG-signed; GitHub shows them as *Verified*.
+- **Release builds:** made with the latest stable Go, in CI only, with a signed build provenance attestation and an SBOM (see *Verify the download*).
 
 ### Releasing
 
-Push a version tag. GitHub Actions runs the tests, builds every platform, and publishes a GitHub Release with the archives and `checksums.txt`:
+Push a signed version tag. GitHub Actions runs the tests, builds every platform, and publishes a GitHub Release with the archives, the SBOM and `checksums.txt`:
 
 ```sh
-git tag v1.0.0
+git tag -s v1.0.0 -m "passgen v1.0.0"
 git push origin v1.0.0
 ```
 

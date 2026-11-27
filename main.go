@@ -19,22 +19,33 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run is main without the process exit, so tests can drive it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// cliFlags holds every option of the main command.
+type cliFlags struct {
+	length, count                     int
+	complexity, symbolMode, symbolSet string
+	exclude                           string
+	lower, upper, digits, symbols     bool
+	noLower, noUpper, noDigits, noSym bool
+	noAmbiguous, noRequireEach        bool
+	doCopy, quiet, interactive        bool
+	listSymbols, showVersion          bool
+	checkForUpdate                    bool
+}
+
+// subcommands, with a one-line description each (used by completion too).
+var subcommands = [][2]string{
+	{"check", "estimate the strength of a password from stdin"},
+	{"completion", "print a shell completion script (bash, zsh, fish)"},
+	{"man", "print the man page"},
+}
+
+// newFlagSet defines the main command's flags. Completion scripts are built
+// from the same set, so they can't drift from what passgen accepts.
+func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags) {
 	fs := flag.NewFlagSet("passgen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	f := &cliFlags{}
 
-	var (
-		length, count                     int
-		complexity, symbolMode, symbolSet string
-		exclude                           string
-		lower, upper, digits, symbols     bool
-		noLower, noUpper, noDigits, noSym bool
-		noAmbiguous, noRequireEach        bool
-		doCopy, quiet, interactive        bool
-		listSymbols, showVersion          bool
-		checkForUpdate                    bool
-	)
 	intFlag := func(p *int, short, long string, def int, usage string) {
 		fs.IntVar(p, long, def, usage)
 		fs.IntVar(p, short, def, usage)
@@ -52,29 +63,45 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 
-	intFlag(&length, "l", "length", 16, "password length")
-	intFlag(&count, "n", "count", 1, "number of passwords")
-	strFlag(&complexity, "c", "complexity", "high", "preset: low, medium, high")
-	strFlag(&symbolMode, "s", "symbol-mode", "safe", "symbol set: safe, standard, complex")
-	strFlag(&symbolSet, "", "symbol-set", "", "custom symbol characters")
-	strFlag(&exclude, "", "exclude", "", "characters to exclude")
-	boolFlag(&lower, "", "lower", "include a-z")
-	boolFlag(&upper, "", "upper", "include A-Z")
-	boolFlag(&digits, "", "digits", "include 0-9")
-	boolFlag(&symbols, "", "symbols", "include symbols")
-	boolFlag(&noLower, "", "no-lower", "exclude a-z")
-	boolFlag(&noUpper, "", "no-upper", "exclude A-Z")
-	boolFlag(&noDigits, "", "no-digits", "exclude 0-9")
-	boolFlag(&noSym, "", "no-symbols", "exclude symbols")
-	boolFlag(&noAmbiguous, "", "no-ambiguous", "exclude look-alike characters")
-	boolFlag(&noRequireEach, "", "no-require-each", "don't force one char from each set")
-	boolFlag(&doCopy, "", "copy", "copy the first password to the clipboard")
-	boolFlag(&quiet, "q", "quiet", "print passwords only")
-	boolFlag(&interactive, "i", "interactive", "interactive mode")
-	boolFlag(&listSymbols, "", "list-symbols", "show symbol sets")
-	boolFlag(&showVersion, "v", "version", "show version")
-	boolFlag(&checkForUpdate, "", "check-update", "check GitHub for a newer release")
+	intFlag(&f.length, "l", "length", 16, "password length")
+	intFlag(&f.count, "n", "count", 1, "number of passwords")
+	strFlag(&f.complexity, "c", "complexity", "high", "preset: low, medium, high")
+	strFlag(&f.symbolMode, "s", "symbol-mode", "safe", "symbol set: safe, standard, complex")
+	strFlag(&f.symbolSet, "", "symbol-set", "", "custom symbol characters")
+	strFlag(&f.exclude, "", "exclude", "", "characters to exclude")
+	boolFlag(&f.lower, "", "lower", "include a-z")
+	boolFlag(&f.upper, "", "upper", "include A-Z")
+	boolFlag(&f.digits, "", "digits", "include 0-9")
+	boolFlag(&f.symbols, "", "symbols", "include symbols")
+	boolFlag(&f.noLower, "", "no-lower", "exclude a-z")
+	boolFlag(&f.noUpper, "", "no-upper", "exclude A-Z")
+	boolFlag(&f.noDigits, "", "no-digits", "exclude 0-9")
+	boolFlag(&f.noSym, "", "no-symbols", "exclude symbols")
+	boolFlag(&f.noAmbiguous, "", "no-ambiguous", "exclude look-alike characters")
+	boolFlag(&f.noRequireEach, "", "no-require-each", "don't force one char from each set")
+	boolFlag(&f.doCopy, "", "copy", "copy the first password to the clipboard")
+	boolFlag(&f.quiet, "q", "quiet", "print passwords only")
+	boolFlag(&f.interactive, "i", "interactive", "interactive mode")
+	boolFlag(&f.listSymbols, "", "list-symbols", "show symbol sets")
+	boolFlag(&f.showVersion, "v", "version", "show version")
+	boolFlag(&f.checkForUpdate, "", "check-update", "check GitHub for a newer release")
+	return fs, f
+}
 
+// run is main without the process exit, so tests can drive it.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "check":
+			return runCheck(args[1:], stdin, stdout, stderr)
+		case "completion":
+			return runCompletion(args[1:], stdout, stderr)
+		case "man":
+			return runMan(args[1:], stdout, stderr)
+		}
+	}
+
+	fs, f := newFlagSet(stderr)
 	fs.Usage = func() { printUsage(stderr) }
 
 	if err := fs.Parse(args); err != nil {
@@ -88,14 +115,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if checkForUpdate {
+	if f.checkForUpdate {
 		return checkUpdate(stdout, stderr, nil)
 	}
-	if showVersion {
+	if f.showVersion {
 		fmt.Fprintln(stdout, "passgen", version)
 		return 0
 	}
-	if listSymbols {
+	if f.listSymbols {
 		for _, name := range symbolModes {
 			fmt.Fprintf(stdout, "%-9s %s\n", name, symbolSets[name])
 		}
@@ -103,62 +130,62 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	opts := Options{
-		Length:      length,
-		SymbolMode:  symbolMode,
-		SymbolSet:   symbolSet,
-		NoAmbiguous: noAmbiguous,
-		Exclude:     exclude,
-		RequireEach: !noRequireEach,
+		Length:      f.length,
+		SymbolMode:  f.symbolMode,
+		SymbolSet:   f.symbolSet,
+		NoAmbiguous: f.noAmbiguous,
+		Exclude:     f.exclude,
+		RequireEach: !f.noRequireEach,
 	}
-	if err := opts.ApplyPreset(complexity); err != nil {
+	if err := opts.ApplyPreset(f.complexity); err != nil {
 		return fail(stderr, err)
 	}
 	// Per-set flags override the preset. Only flags the user actually gave count.
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
 		case "lower":
-			opts.Lower = lower
+			opts.Lower = f.lower
 		case "upper":
-			opts.Upper = upper
+			opts.Upper = f.upper
 		case "digits":
-			opts.Digits = digits
+			opts.Digits = f.digits
 		case "symbols":
-			opts.Symbols = symbols
+			opts.Symbols = f.symbols
 		case "no-lower":
-			opts.Lower = !noLower
+			opts.Lower = !f.noLower
 		case "no-upper":
-			opts.Upper = !noUpper
+			opts.Upper = !f.noUpper
 		case "no-digits":
-			opts.Digits = !noDigits
+			opts.Digits = !f.noDigits
 		case "no-symbols":
-			opts.Symbols = !noSym
+			opts.Symbols = !f.noSym
 		}
 	})
 
-	if interactive {
-		return runInteractive(opts, complexity, count, stdin, stdout, stderr)
+	if f.interactive {
+		return runInteractive(opts, f.complexity, f.count, stdin, stdout, stderr)
 	}
 
-	if count < 1 {
-		return fail(stderr, errors.New("count must be at least 1"))
+	if f.count < 1 || f.count > maxCount {
+		return fail(stderr, fmt.Errorf("count must be 1-%d", maxCount))
 	}
 	if err := opts.Validate(); err != nil {
 		return fail(stderr, err)
 	}
 
-	passwords := make([]string, count)
+	passwords := make([]string, f.count)
 	for i := range passwords {
 		passwords[i] = Generate(opts)
 		fmt.Fprintln(stdout, passwords[i])
 	}
-	if !quiet {
+	if !f.quiet {
 		fmt.Fprintf(stderr, "\n%s\n", strengthLine(opts))
 	}
-	if doCopy {
+	if f.doCopy {
 		if err := copyToClipboard(passwords[0]); err != nil {
 			return fail(stderr, err)
 		}
-		if !quiet {
+		if !f.quiet {
 			fmt.Fprintln(stderr, "[copied to clipboard]")
 		}
 	}
@@ -180,10 +207,13 @@ func printUsage(w io.Writer) {
 Usage:
   passgen [options]
   passgen -i              interactive mode
+  passgen check           estimate a password's strength (reads stdin)
+  passgen completion SHELL  print a completion script: bash, zsh, fish
+  passgen man             print the man page
 
 Options:
-  -l, --length N          password length (default 16)
-  -n, --count N           number of passwords (default 1)
+  -l, --length N          password length, 1-4096 (default 16)
+  -n, --count N           number of passwords, 1-10000 (default 1)
   -c, --complexity LEVEL  low = a-z 0-9, medium = + A-Z, high = + symbols (default high)
   -s, --symbol-mode MODE  symbol set (default safe):
 %s      --symbol-set CHARS  custom symbols (overrides --symbol-mode)
@@ -206,5 +236,6 @@ Examples:
   passgen -l 24 -n 5
   passgen -c medium --no-ambiguous
   passgen -s complex -l 32 --copy
+  pbpaste | passgen check
 `, version, sym.String(), ambiguousChars)
 }

@@ -28,12 +28,13 @@ jobs:
         run: make test
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
-      - name: Build all platforms
+      - name: Build all platforms + SBOM
         env:
           TAG: ${{ github.ref_name }}
-        run: make dist VERSION="$TAG"
-      # Signed proof that every archive in checksums.txt was built by this
-      # workflow from this commit. Verify with: gh attestation verify <file> -R <repo>
+        run: make release-dist VERSION="$TAG"
+      # Signed proof that every archive (and the SBOM) in checksums.txt was
+      # built by this workflow from this commit.
+      # Verify with: gh attestation verify <file> -R <repo>
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

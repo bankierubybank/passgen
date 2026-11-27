@@ -1,0 +1,190 @@
+.TH PASSGEN 1 "2026-11-27" "passgen dev" "User Commands"
+.SH NAME
+passgen \- generate secure random passwords locally
+.SH SYNOPSIS
+.B passgen
+.RI [ options ]
+.br
+.B passgen \-i
+.br
+.B passgen check
+.RB [ \-\-min\-bits
+.IR N ]
+.RB [ \-q ]
+.br
+.B passgen completion
+.BR bash | zsh | fish
+.br
+.B passgen man
+.SH DESCRIPTION
+.B passgen
+makes random passwords with the operating system's cryptographic random
+source.
+It runs entirely offline: it never touches the network, except when asked to
+with
+.BR \-\-check\-update .
+.PP
+By default it prints one 16\-character password from lowercase, uppercase,
+digits and the
+.I safe
+symbol set, with at least one character from each.
+That is about 99 bits of entropy.
+The password goes to standard output; a strength line goes to standard error,
+so piping or capturing the output gets only the password.
+.SH OPTIONS
+.TP
+.BR \-l ", " \-\-length " \fIN\fR"
+Password length, 1\-4096 (default 16).
+.TP
+.BR \-n ", " \-\-count " \fIN\fR"
+Number of passwords, 1\-10000 (default 1).
+.TP
+.BR \-c ", " \-\-complexity " \fILEVEL\fR"
+Character set preset:
+.B low
+(a\-z 0\-9),
+.B medium
+(adds A\-Z) or
+.B high
+(adds symbols; the default).
+.TP
+.BR \-s ", " \-\-symbol\-mode " \fIMODE\fR"
+Which symbols to use (default
+.BR safe ):
+.RS
+.TP 10
+.B safe
+.B \-_.+=@#%*?^
+\(em accepted almost everywhere; no quoting trouble in shells, JSON, XML,
+URLs, CSV, SQL or .env files.
+.TP
+.B standard
+.B !@#$%^&*()\-_=+[]{};:,.<>?/~
+\(em wider; still no quotes, backslash, backtick, pipe or space.
+.TP
+.B complex
+all 32 printable ASCII symbols; some systems reject or mangle a few of them.
+.RE
+.TP
+.BI \-\-symbol\-set " CHARS"
+Use exactly these symbol characters (overrides
+.BR \-\-symbol\-mode ).
+.TP
+.BR \-\-lower ", " \-\-no\-lower
+Include or exclude a\-z, overriding the preset.
+.TP
+.BR \-\-upper ", " \-\-no\-upper
+Include or exclude A\-Z.
+.TP
+.BR \-\-digits ", " \-\-no\-digits
+Include or exclude 0\-9.
+.TP
+.BR \-\-symbols ", " \-\-no\-symbols
+Include or exclude symbols.
+.TP
+.B \-\-no\-ambiguous
+Leave out look\-alike characters:
+.B Il1O0o|`'"
+.TP
+.BI \-\-exclude " CHARS"
+Leave out these characters too.
+.TP
+.B \-\-no\-require\-each
+Don't force one character from each enabled set.
+.TP
+.B \-\-copy
+Copy the first password to the clipboard (pbcopy, clip, wl\-copy, xclip or
+xsel).
+.TP
+.BR \-q ", " \-\-quiet
+Print passwords only, without the strength line.
+.TP
+.BR \-i ", " \-\-interactive
+Ask for the options, then loop: Enter makes new passwords,
+.B c
+or a number copies one,
+.B s
+changes the settings,
+.B q
+quits.
+.TP
+.B \-\-list\-symbols
+Show the symbol sets and exit.
+.TP
+.BR \-v ", " \-\-version
+Show the version and exit.
+.TP
+.B \-\-check\-update
+Ask GitHub whether a newer release exists and print where to get it.
+This is the only time passgen uses the network.
+It never downloads or installs anything.
+.TP
+.BR \-h ", " \-\-help
+Show a short help text.
+.SH COMMANDS
+.TP
+.B check
+Estimate the strength of an existing password, offline.
+The password is read from standard input: type it at the prompt (it is not
+shown on screen on macOS, Linux and BSD) or pipe it in.
+It is never taken as an argument, since that would put it in your shell
+history.
+.RS
+.PP
+The estimate starts from brute force and charges far less for what cracking
+tools try first: common passwords and words (also with l33t swaps), repeated
+characters, sequences such as
+.B abcd
+or
+.BR 4321 ,
+and keyboard runs such as
+.BR qwerty .
+It is a best case: real tools use much bigger word lists.
+.TP
+.BI \-\-min\-bits " N"
+Exit with status 3 if the estimate is below
+.I N
+bits.
+.TP
+.BR \-q ", " \-\-quiet
+Print only the estimated bits.
+.RE
+.TP
+.BR completion " " bash | zsh | fish
+Print a shell completion script.
+.TP
+.B man
+Print this manual page.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Invalid options, or an error such as no clipboard tool.
+.TP
+.B 2
+Command line could not be parsed.
+.TP
+.B 3
+.B check
+estimate below
+.BR \-\-min\-bits .
+.SH EXAMPLES
+.TP
+.B passgen \-l 24 \-n 5
+Five 24\-character passwords.
+.TP
+.B passgen \-c medium \-\-no\-ambiguous
+Letters and digits only, without look\-alikes.
+.TP
+.B passgen \-s complex \-l 32 \-\-copy
+A 32\-character password with every symbol, copied to the clipboard.
+.TP
+.B pbpaste | passgen check \-\-min\-bits 80
+Check the password on the clipboard; exit 3 if it is weaker than 80 bits.
+.TP
+.B source <(passgen completion bash)
+Turn on tab completion in the current bash shell.
+.SH SEE ALSO
+https://github.com/bankierubybank/passgen

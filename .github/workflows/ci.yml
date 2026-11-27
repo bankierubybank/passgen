@@ -71,6 +71,46 @@ jobs:
           advanced-security: false # fail this job on findings instead of uploading
           annotations: true
 
+  fuzz:
+    # Throws random input at the generator, the CLI parser, the strength
+    # checker and the version parser, looking for panics and wrong output.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Fuzz each target for 30s
+        run: |
+          for target in $(grep -ho '^func Fuzz[A-Za-z]*' ./*_test.go | cut -c6-); do
+            echo "::group::$target"
+            go test -run '^$' -fuzz "^${target}\$" -fuzztime 30s .
+            echo "::endgroup::"
+          done
+      # A failing input is saved under testdata/fuzz; keep it to reproduce.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failures
+          path: testdata/fuzz
+
+  sbom:
+    # Makes sure the release SBOM step works before a tag depends on it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - run: make sbom VERSION=ci
+      - run: jq -e '.bomFormat == "CycloneDX" and (.components | length) >= 1' dist/passgen_ci_sbom.cdx.json
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
