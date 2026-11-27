@@ -53,14 +53,6 @@ var commonWords = []string{
 	"000000", "123123", "654321", "112233", "121212", "696969", "1234",
 }
 
-var commonSet = func() map[string]bool {
-	m := map[string]bool{}
-	for _, w := range commonWords {
-		m[w] = true
-	}
-	return m
-}()
-
 // Keyboard rows, for spotting runs like "qwer" or "asdf".
 var keyboardRows = []string{"`1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./"}
 
